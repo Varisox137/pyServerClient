@@ -287,7 +287,7 @@ def init_table():
             else:
                 draw_rect(-480,slot_y*180-60,CARD_SIZE[0],CARD_SIZE[1])
 
-def splendor_main():
+def game_main():
     global NOBLES
     print('\n----------   Game start! Setup:   ----------')
     while k:=input('\nPlayer number ?= '):
@@ -347,4 +347,4 @@ def splendor_main():
     input()
 
 if __name__=='__main__':
-    splendor_main()
+    game_main()

@@ -2,11 +2,12 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from time import sleep
 
-from Splendor import splendor_main
 # import bwpgrb.bwpMain
 
 CLIENT_VERSION='230517'
 URL='https://n6944f2933.imdo.co/'
+
+MAX_WK=5 # TPE max worker
 
 def dialog(command:str,method:str,data:dict=None):
 	import urllib.request as rq
@@ -58,12 +59,13 @@ def log_or_reg():
 		ch=input('\nLocal user number ?=\n')
 		if ch!='0':
 			if ch.isdigit() and (ch:=int(ch))<=lu_num: # choose user
-				usr,pwd=loc_usrs[ch-1]
+				(usr,pwd)=loc_usrs[ch-1]
 			else: # by default
-				usr,pwd=loc_usrs[0]
+				(usr,pwd)=loc_usrs[0]
 		else: print('\nWill log in or register manually...'); sleep(0.7)
 	else: print('\nNo local config found...'); sleep(0.7)
 	# now, either no local config found, or (usr,pwd) already chosen from local, or just choose to log in manually
+	from hashlib import sha3_256
 	if not (usr or pwd):
 		reg_key=input('\nEnter registration code, or skip by entering nothing...?=\n')
 		if reg_key:
@@ -90,9 +92,11 @@ def log_or_reg():
 		else: # login an existing user
 			print('\nBegin normal login process...'); sleep(0.7)
 			while True: # has to check manual login
+				crpt=sha3_256()
 				usr=input('\nEnter username :=\n')
 				pwd=input('Enter password :=\n')
-				res=dialog(command='login',method='post',data={'username':usr,'password':pwd})
+				crpt.update(pwd.encode('utf-8'))
+				res=dialog(command='login',method='post',data={'username':usr,'pwd_hash':crpt.hexdigest()})
 				print(msg:=res['message'])
 				if msg.startswith('Caution'):
 					USR=usr='admin'
@@ -101,13 +105,14 @@ def log_or_reg():
 					USR=usr
 					break
 	else: # local config auto login
-		res=dialog(command='login',method='post',data={'username':usr,'password':pwd})
+		crpt=sha3_256(pwd.encode('utf-8'))
+		res=dialog(command='login',method='post',data={'username':usr,'pwd_hash':crpt.hexdigest()})
 		print(msg:=res['message'])
 		# local config should guarantee user existence in server, with the correct password
 		assert msg.startswith('Successful'),'LocalConfigLoginError'
 		USR=usr
 	# finally, refresh local user and overwrites config
-	if usr!='admin': # admin mustn't be recorded ito config
+	if usr!='admin': # admin mustn't be recorded into config
 		if usr not in list(map(lambda x:x[0],loc_usrs)):
 			loc_usrs.append((usr,pwd))
 	with open(os.environ[base[os.name]]+'/vsxClient.cfg','w',encoding='utf-8') as config:
@@ -225,7 +230,7 @@ def msg_refr(interval:int|float):
 			REC[0]+=len(pub_msg.split('\n'))
 		sleep(interval)
 
-EXECUTOR=ThreadPoolExecutor(max_workers=5)
+EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK)
 def terminate():
 	global ALIVE
 	ALIVE=False
@@ -233,12 +238,13 @@ def terminate():
 	print(res['message'])
 	EXECUTOR.shutdown(cancel_futures=True)
 	sleep(1)
-	input('Program finished.\n')
+	input('Program finished, press enter to quit......\n')
 	exit()
 
 def admin_mode():
 	pass
 
+GAMES=('Splendor',) # module name, available offline-mode games, still developing & adding
 if __name__=='__main__':
 	T=bool(input('test mode ?')=='s'); sleep(0.7)
 	print('\nClient version : '+CLIENT_VERSION+'\n'); sleep(0.7)
@@ -250,17 +256,23 @@ if __name__=='__main__':
 		sleep(1)
 		print("\nOops! Seems the Server isn't online...")
 		print('Starting offline mode......\n'); sleep(0.7)
-		if not input('enter local-player Splendor ?'): splendor_main()
-		input('press enter to quit......')
+		if not input('press enter to start a mini-game ?'):
+			game_name=input('enter the name of the game you want to play ?=')
+			if game_name in GAMES:
+				from importlib import import_module
+				game=import_module(game_name)
+				game.game_main()
+		input('Program finished, press enter to quit......\n')
 	else: # server online
-		print("\nWelcome to Varisox137's server! (still under construction yet)"); sleep(0.7)
+		print("\nWelcome to Varisox137's server! (still improving yet)"); sleep(0.7)
 		log_or_reg() # login or registration, USR set
+		sleep(0.7)
 		if USR=='admin':
 			EXECUTOR.submit(admin_mode)
 		elif not T:
 			EXECUTOR.submit(command_cycle)
-			EXECUTOR.submit(msg_refr,1)
 			EXECUTOR.submit(keep_conn,5)
+			EXECUTOR.submit(msg_refr,1)
 		else:
 			EXECUTOR.submit(keep_conn,5)
 			EXECUTOR.submit(command_cycle)
