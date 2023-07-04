@@ -104,10 +104,10 @@ def log_or_reg():
 					ts:=int(dt.now().timestamp())
 				).encode('utf-8'))  # initializes with current timestamp (seconds), before sending to server
 				crpt.update(
-					(ex:=sha3_256(pwd.encode('utf-8')).hexdigest()).encode('utf-8')
+					(pwd_hash:=sha3_256(pwd.encode('utf-8')).hexdigest()).encode('utf-8')
 				) # pwd -> hash -> timestamped-hash
 				hash_final=crpt.hexdigest()
-				if T: print('\n***hash check***\nts',ts,'ex',ex,'\nfinal =',hash_final,'\n')
+				if T: print(f'\n***hash check***\npwd_hash {pwd_hash}\n{ts} := {hash_final}\n')
 				res=dialog(command='login',method='post',data={'username':usr,'hash':hash_final})
 				print(msg:=res['message'])
 				if msg.startswith('Caution'):
@@ -121,10 +121,10 @@ def log_or_reg():
 			ts:=int(dt.now().timestamp())
 		).encode('utf-8'))  # initializes with current timestamp (seconds), before sending to server
 		crpt.update(
-			(ex:=sha3_256(pwd.encode('utf-8')).hexdigest()).encode('utf-8')
+			(pwd_hash:=sha3_256(pwd.encode('utf-8')).hexdigest()).encode('utf-8')
 		) # pwd -> hash -> timestamped-hash
 		hash_final=crpt.hexdigest()
-		if T: print('\n***hash check***\nts',ts,'ex',ex,'\nfinal =',hash_final,'\n')
+		if T: print(f'\n***hash check***\npwd_hash {pwd_hash}\n{ts} := {hash_final}\n')
 		res=dialog(command='login',method='post',data={'username':usr,'hash':hash_final})
 		print(msg:=res['message'])
 		# local config should guarantee user existence in server, with the correct password
