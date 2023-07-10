@@ -4,10 +4,6 @@ project info:
     programmer   = Varisox137
     code_version = 23.3.8
 """
-if not __debug__:
-    print('debug off: keyword ASSERT unavailable.')
-    exit()
-
 from random import shuffle,sample
 from time import sleep
 import turtle
