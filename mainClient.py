@@ -1,19 +1,25 @@
-from concurrent.futures import ThreadPoolExecutor
-from time import sleep
-from importlib import import_module as imm
+from concurrent.futures import ThreadPoolExecutor # class
+from time import sleep # func
+from importlib import import_module as imm # func
+from datetime import datetime as dt # module
+import os # module
+import logging # module
 
 # import bwpgrb.bwpMain
 
 # real globals, should never be changed
-CLIENT_VERSION='230711'
+CLIENT_VERSION='230717'
 URL='https://n6944f2933.imdo.co/'
+GAMES=('Mahjong',) # module name, available offline-mode games, still developing & adding
+INTV={'keep':5,'msg':1,'gmrd':1,'gmst':3} # interval constants for periodic requests
+LOG_LIM=7 # day limit for removal of logs too old
+MAX_WK=5 # TPE max worker number
+EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading pool executor
 
-MAX_WK=5 # TPE max worker
-EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading
-
-# the capitalized pseudo-globals defined closely before methods are actually globally-working objects
+# the capitalized pseudo-globals (defined closely before methods) are actually changeable, global-working variants
 
 def dialog(command:str,method:str,data:dict=None):
+	logging.debug(f'command={command}, method={method}, data={data}')
 	import urllib.request as rq
 	import urllib.parse as ps
 
@@ -24,6 +30,7 @@ def dialog(command:str,method:str,data:dict=None):
 				lambda x:(ps.unquote_plus((m:=x.split('='))[0]),
 				          ps.unquote_plus(m[1])),
 				s.split('&'))))
+		logging.debug(f"url-decoded: from '{s}' to '{str(d)}'")
 		return d
 
 	headers={'Connection': 'keep-alive',
@@ -32,14 +39,16 @@ def dialog(command:str,method:str,data:dict=None):
 	data['command']=command
 	data_enc=ps.urlencode(data).encode('utf-8')
 	request=rq.Request(url=URL,data=data_enc,headers=headers,method=method.upper()) # http method should be upper case
+	logging.debug('Request object constructed')
 	response=rq.urlopen(request).read().decode()
+	logging.debug(f'response acquired: {response}')
 	res_dict=urldecode(response)
 	res_dict['data']=urldecode(res_dict['data'])
 	return res_dict
 
 USR='' # username
 def log_or_reg():
-	import os # for ENVIRON and SYSNAME only
+	logging.info('begin logging in or registration')
 	global USR
 	loc_usrs=[]
 	base={'nt':'LOCALAPPDATA','posix':'HOME'} # the base location for local config to store
@@ -50,7 +59,9 @@ def log_or_reg():
 		with open(os.environ[base[os.name]]+'/vsxClient.cfg','r',encoding='utf-8') as config:
 			while usr:=config.readline().strip(): # username
 				loc_usrs.append((usr,config.readline().strip())) # password
-	except FileNotFoundError: pass
+		logging.debug('local config found')
+	except FileNotFoundError:
+		logging.debug('no local config')
 	if loc_usrs: # local config has content
 		print('\nLocal config found !'); sleep(0.7)
 		print('\nExisting local users:')
@@ -67,41 +78,55 @@ def log_or_reg():
 				(usr,pwd)=loc_usrs[ch-1]
 			else: # by default
 				(usr,pwd)=loc_usrs[0]
-		else: print('\nWill log in or register manually...'); sleep(0.7)
+			logging.debug(f'config chosen: {ch}')
+		else:
+			print('\nWill log in or register manually...')
+			logging.debug('config passed: manual login')
+			sleep(0.7)
 	else: print('\nNo local config found...'); sleep(0.7)
 # now, either no local config found, or (usr,pwd) already chosen from local, or the user chooses operate manually
 	from hashlib import sha3_256
-	from datetime import datetime as dt
 	if not (usr or pwd): # not from local config choice
+		logging.info('begin manual login process')
 		reg_key=input('\nEnter registration code, or skip by entering nothing...?=\n')
 		if reg_key:
+			logging.debug(f'rk input: {reg_key}')
 			res=dialog(command='chk_reg',method='post',data={'key':reg_key})
 			msg=res['message']
-		else: msg='Notice: Registration skipped.'
+		else:
+			logging.debug('rk skipped')
+			msg='Notice: Registration skipped.'
 		print(msg); sleep(0.7)
 		if msg.startswith('Successful'): # code correct, starts registration process
+			logging.debug('rk pass')
 			print('\nBegin new user registration...'); sleep(0.7)
 			while True: # guarantee a valid new username
 				usr=input('\nEnter new username :=\n') # all checks done by server
 				res=dialog(command='chk_new_usn',method='post',data={'username':usr})['message']
 				print(msg:=res['message'])
 				if msg.startswith('Successful'): break
+			logging.debug(f'newusr: {usr}')
 			while True: # guarantee identical twice input
 				pwd=input('\nEnter password :=\n')
 				if input('Confirm password :=\n')!=pwd:
 					print('Password unmatch !')
 				else: # reg to server
+					logging.debug(f'newpwd: {pwd}')
 					USR=usr
 					crpt=sha3_256(pwd.encode('utf-8')) # construct an encrypter, pwd -> hash
 					# Note that registration sends only hash of pwd, without timestamp-initialization
+					logging.debug(f'new pwdhash: {crpt.hexdigest()}')
 					res=dialog(command='register',method='post',data={'username':usr,'pwd_hash':crpt.hexdigest()})
 					print(res['message'])
 					break
+			logging.info(f"reg process completed with msg: {res['message']}")
 		else: # login an existing user, manually
+			logging.debug('manual login')
 			print('\nBegin normal login process...'); sleep(0.7)
 			while True: # has to check manual login
 				usr=input('\nEnter username :=\n')
 				pwd=input('Enter password :=\n')
+				logging.debug(f'manual login as: {usr} {pwd}')
 				crpt=sha3_256(str(
 					ts:=int(dt.now().timestamp())
 				).encode('utf-8'))  # initializes with current timestamp (seconds), before sending to server
@@ -109,16 +134,20 @@ def log_or_reg():
 					(pwd_hash:=sha3_256(pwd.encode('utf-8')).hexdigest()).encode('utf-8')
 				) # pwd -> hash -> timestamped-hash
 				hash_final=crpt.hexdigest()
+				logging.debug(f'h_f: {hash_final}')
 				if T: print(f'\n***hash check***\npwd_hash {pwd_hash}\n{ts} := {hash_final}\n')
 				res=dialog(command='login',method='post',data={'username':usr,'hash':hash_final})
 				print(msg:=res['message'])
 				if msg.startswith('Caution'):
+					logging.warning('ADMIN login')
 					USR=usr='admin'
 					break
 				elif msg.startswith('Successful'):
+					logging.info('user login')
 					USR=usr
 					break
 	else: # choice from local config, automatic login
+		logging.debug('auto login from config')
 		crpt=sha3_256(str(
 			ts:=int(dt.now().timestamp())
 		).encode('utf-8'))  # initializes with current timestamp (seconds), before sending to server
@@ -132,7 +161,8 @@ def log_or_reg():
 		# local config should guarantee user existence in server, with the correct password
 		assert msg.startswith('Successful'),'LocalConfigLoginError'
 		USR=usr
-	del crpt,dt,sha3_256 # release
+		logging.info('auto login')
+	del crpt,sha3_256 # release
 	# finally, refresh local user and overwrites config
 	if usr!='admin': # admin mustn't be recorded into config
 		if usr not in list(map(lambda x:x[0],loc_usrs)):
@@ -140,6 +170,7 @@ def log_or_reg():
 	with open(os.environ[base[os.name]]+'/vsxClient.cfg','w',encoding='utf-8') as config:
 		for each in loc_usrs:
 			config.writelines((each[0]+'\n',each[1]+'\n'))
+	logging.info('config updated')
 
 ALIVE=True # program keep-alive
 def keep_conn(interval:int|float):
@@ -151,6 +182,7 @@ CUR_RM='' # the current room the user is now in
 CUR_GM='' # the current game of the room the user is in; initialized as '' (no game)
 CMD_LS=[] # available command list
 def command_cycle():
+	logging.info('enters command cycle')
 	global REC,CUR_RM,CUR_GM,CMD_LS
 	print('\nNow you\'ve entered the command cycle.')
 	print('Getting full command list...'); sleep(0.7)
@@ -169,11 +201,13 @@ def command_cycle():
 		print('Notice that you should type the full name, or the first letter, of the commands...')
 		print('...but luckily the cases of input doesn\'t matter, which is good news.'); sleep(0.7)
 		cmd=input('\nYour command ?=\n').lower(); sleep(0.7)
+		logging.debug(f'wT with cmd: {cmd}')
 		match cmd:
 			case 'quit'|'q':
 				terminate()
 			case 'public'|'p':
 				msg=input('Enter the message you want to say to everyone :=\n')
+				logging.debug(f'p_msg: {msg}')
 				res=dialog(command='pub_chat',method='post',data={'username':USR,'message':msg})
 				print(res['message'])
 				REC[0]+=1
@@ -196,13 +230,16 @@ def command_cycle():
 					if rm not in list(REC[1].keys()): # haven't entered this room during this login
 						REC[1][rm]=0 # initialize room history read position record
 					if rm in rm_ls: # room exists in server
+						logging.debug(f'e: {rm}')
 						res=dialog(command='enter',method='post',data={'username':USR,'roomid':rm})
 					else: # room doesn't exist, thus create it
+						logging.debug(f'c: {rm}')
 						res=dialog(command='create',method='post',data={'username':USR,'roomid':rm})
 					print(res['message'])
 			case 'room'|'r':
 				if not CUR_RM: print('Not in a room yet!'); continue
 				msg=input('Enter the message you want to say to your room members :=\n')
+				logging.debug(f'r_msg: {msg}')
 				res=dialog(command='rm_chat',method='post',data={'username':USR,'message':msg})
 				print(res['message'])
 				REC[1][CUR_RM]+=1
@@ -219,6 +256,7 @@ def command_cycle():
 				print(res['message'])
 				print('Games available: '+res['data']['games'])
 				game=input('Enter the game you want to play:\n')
+				logging.debug(f'gsu: {game}')
 				if game in res['data']['games'].split():
 					# first get required args for game setup
 					res=dialog(command='get_gm_req',method='get',data={'game':game}) # no need to verify if host or not
@@ -228,6 +266,7 @@ def command_cycle():
 					while len(params.split(' '))!=len(req.split(',')):
 						print('Parameter count error!')
 						params=input('Please input the proper params for gameplay:\n')
+					logging.debug(f'params: {params}')
 					res=dialog(command='gm_setup',method='post',data={
 						'username':USR,'game':game,'params':params}) # param checking done by server
 					print(msg:=res['message'])
@@ -347,39 +386,83 @@ def get_gm_pgrs(): # get game progress
 	del gm_st
 	pass # TBD: recover the command_cycle, or else
 
-def terminate():
+def terminate(): # includes exit() method
+	logging.info('terminating program')
 	global ALIVE
 	ALIVE=False
 	res=dialog(command='logout',method='post',data={'username':USR})
+	logging.debug('user logout')
 	print(res['message'])
 	EXECUTOR.shutdown(cancel_futures=True)
+	logging.debug('TPE shutdown')
 	sleep(1)
 	input('Program finished, press enter to quit......\n')
-	exit()
+	os._exit(1)
+
+def handle_error(err: Exception):
+	logging.info(f'handling error: {err}')
+	if T: print(type(err))
+	from urllib.error import URLError
+	from http.client import RemoteDisconnected
+	if SF:=isinstance(err, (URLError, RemoteDisconnected)): # server failed
+		print("\nOops! Seems the server isn't online now......")
+	else:
+		print('\nOops! An error has just occurred......')
+	logging.debug(f'SF: {SF}')
+	from traceback import print_exc
+	print_exc(); sleep(1)
+	print('Starting offline mode......\n'); sleep(0.7)
+	if not input('press enter to start a mini-game ?'):
+		game_name = input('enter the name of the game you want to play ?=')
+		if game_name in GAMES:  # TBD
+			pass
+	if not SF:  # server connection working, can request to log out
+		terminate()
+	else:
+		input('Program finished, press enter to quit......\n')
+		os._exit(1)
 
 def admin_mode():
 	pass
 
-GAMES=('Mahjong',) # module name, available offline-mode games, still developing & adding
-INTV={'keep':5,'msg':1,'gmrd':1,'gmst':3}
+def log_init():
+	try:
+		os.mkdir('./log')
+	except FileExistsError: pass
+	logging.basicConfig(
+		filename=f"./log/{dt.now().strftime('%Y_%m_%d_%H_%M_%S')}.log",filemode='w',
+		format='\n%(asctime)s ——— %(name)s ——— %(levelname)s <—— from: %(funcName)s\n%(message)s',
+		level=logging.DEBUG)
+	logging.debug('Logging config initialized.')
+	# finally, delete log files too old (e.g. 7 days or older)
+	cmd='dir' if os.name=='nt' else 'ls'
+	file_list=os.popen(f'{cmd} "./log/"').readlines()[6:-2]
+	# res[0]/[1] = Drive/Serial
+	# \n
+	# res[3] = directory
+	# \n
+	# res[4]/[5] = '.'/'..'
+	# res[6:-2] := wanted filename_list
+	# res[-2] = files
+	# res[-1] = folders
+	import re
+	for each in file_list[:-1]: # the last one is current log
+		name=each.split()[-1] # actual filename only
+		if re.match(re.compile(r'\d\d\d\d_\d\d_\d\d_\d\d_\d\d_\d\d.log'),name):
+			file_time=int(''.join(name[:-4].split('_')))
+			cur_time=int(dt.now().strftime('%Y%m%d%H%M%S'))
+			if cur_time-file_time>LOG_LIM*100**3: # more than 7 days
+				os.remove(f'./log/{name}')
+	logging.info('cleanup logs from too long ago')
+
 if __name__=='__main__':
+	log_init()
 	T=bool(input('test mode ?')); sleep(0.7)
-	# if T: URL='https://localhost:1037/'
+	logging.debug(f'T: {T}')
 	print('\nClient version : '+CLIENT_VERSION+'\n'); sleep(0.7)
 	try:
-		print(dialog(command='try',method='post')['message']) # check if server is online; res should have ['data']=={}
-	except Exception:
-		from traceback import print_exc
-		print_exc()
-		sleep(1)
-		print("\nOops! Seems the server isn't online......or maybe an error just occurred ?")
-		print('Starting offline mode......\n'); sleep(0.7)
-		if not input('press enter to start a mini-game ?'):
-			game_name=input('enter the name of the game you want to play ?=')
-			if game_name in GAMES: # TBD
-				pass
-		input('\nProgram finished, press enter to quit......\n')
-	else: # server online
+		print(dialog(command='try',method='post')['message'])
+		logging.debug('cmd=try, server online')
 		print("\nWelcome to Varisox137's server! (still improving yet)"); sleep(0.7)
 		log_or_reg() # login or registration, USR set
 		sleep(1)
@@ -394,3 +477,5 @@ if __name__=='__main__':
 		else:
 			EXECUTOR.submit(keep_conn,INTV['keep']*60)
 			EXECUTOR.submit(command_cycle)
+	except Exception as e:
+		handle_error(e)
