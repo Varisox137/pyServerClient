@@ -4,12 +4,22 @@ from importlib import import_module as imm # func
 from datetime import datetime as dt # module
 import os # module
 import logging # module
+import httpx # modules
+# import asyncio # module
+from urllib.parse import unquote_plus as uqp # func
+# from json import dumps as jd, loads as jl # func
 
 # import bwpgrb.bwpMain
 
 # real globals, should never be changed
-CLIENT_VERSION='230717'
-URL='https://n6944f2933.imdo.co/'
+CLIENT_VERSION='230724' # ALWAYS remember to update server cli-ver !!!
+URL='https://n6944f2933.imdo.co/' # unchanging unless testing
+CLI=httpx.Client(headers={
+	'Connection': 'keep-alive',
+	'Content-Type': 'text/plain',
+	'Client-Version': CLIENT_VERSION
+}) # reuses everytime
+
 GAMES=('Mahjong',) # module name, available offline-mode games, still developing & adding
 INTV={'keep':5,'msg':1,'gmrd':1,'gmst':3} # interval constants for periodic requests
 LOG_LIM=7 # day limit for removal of logs too old
@@ -18,31 +28,32 @@ EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading pool executor
 
 # the capitalized pseudo-globals (defined closely before methods) are actually changeable, global-working variants
 
-def dialog(command:str,method:str,data:dict=None):
-	logging.debug(f'command={command}, method={method}, data={data}')
-	import urllib.request as rq
-	import urllib.parse as ps
+def dialog(method:str,command:str,data:dict=None):
+	logging.debug(f'method={method}, command={command}, data={data}')
 
 	def urldecode(s:str):
 # no need to set the split() param: maxsplit, as res_dict['data'] should have already been url-encoded, e.g. '&'->'%26'
 		d={}
-		if s: d.update(list(map(
-				lambda x:(ps.unquote_plus((m:=x.split('='))[0]),
-				          ps.unquote_plus(m[1])),
-				s.split('&'))))
+		if s: d.update(list(map(lambda x:(uqp((m:=x.split('='))[0]),uqp(m[1])),s.split('&'))))
 		logging.debug(f"url-decoded: from '{s}' to '{str(d)}'")
 		return d
 
-	headers={'Connection': 'keep-alive',
-	         'Content-Type': 'text/plain'}
 	if data is None: data=dict()
+	assert (('method' not in data) and ('command' not in data)), 'KeyError in dialog data: conflict with reserved key.'
+	data['method']=method
 	data['command']=command
-	data_enc=ps.urlencode(data).encode('utf-8')
-	request=rq.Request(url=URL,data=data_enc,headers=headers,method=method.upper()) # http method should be upper case
-	logging.debug('Request object constructed')
-	response=rq.urlopen(request).read().decode()
-	logging.debug(f'response acquired: {response}')
-	res_dict=urldecode(response)
+
+	# DEPRECATED
+	# data_enc=ps.urlencode(data).encode('utf-8')
+	# request=rq.Request(url=URL,data=data_enc,headers=headers,method=method.upper()) # http method should be upper case
+	# logging.debug('Request object constructed')
+	# response=rq.urlopen(request).read().decode()
+
+	# new
+	with CLI as client: # context management
+		response=client.post(url=URL,data=data) # use POST only, for security
+	logging.debug(f'response acquired: {response}') # 'response' should be a Response object
+	res_dict=urldecode(response.read().decode('utf-8'))
 	res_dict['data']=urldecode(res_dict['data'])
 	return res_dict
 
@@ -91,7 +102,7 @@ def log_or_reg():
 		reg_key=input('\nEnter registration code, or skip by entering nothing...?=\n')
 		if reg_key:
 			logging.debug(f'rk input: {reg_key}')
-			res=dialog(command='chk_reg',method='post',data={'key':reg_key})
+			res=dialog(method='post',command='chk_reg',data={'key':reg_key})
 			msg=res['message']
 		else:
 			logging.debug('rk skipped')
@@ -102,7 +113,7 @@ def log_or_reg():
 			print('\nBegin new user registration...'); sleep(0.7)
 			while True: # guarantee a valid new username
 				usr=input('\nEnter new username :=\n') # all checks done by server
-				res=dialog(command='chk_new_usn',method='post',data={'username':usr})['message']
+				res=dialog(method='post',command='chk_new_usn',data={'username':usr})['message']
 				print(msg:=res['message'])
 				if msg.startswith('Successful'): break
 			logging.debug(f'newusr: {usr}')
@@ -116,7 +127,7 @@ def log_or_reg():
 					crpt=sha3_256(pwd.encode('utf-8')) # construct an encrypter, pwd -> hash
 					# Note that registration sends only hash of pwd, without timestamp-initialization
 					logging.debug(f'new pwdhash: {crpt.hexdigest()}')
-					res=dialog(command='register',method='post',data={'username':usr,'pwd_hash':crpt.hexdigest()})
+					res=dialog(method='post',command='register',data={'username':usr,'pwd_hash':crpt.hexdigest()})
 					print(res['message'])
 					break
 			logging.info(f"reg process completed with msg: {res['message']}")
@@ -136,7 +147,7 @@ def log_or_reg():
 				hash_final=crpt.hexdigest()
 				logging.debug(f'h_f: {hash_final}')
 				if T: print(f'\n***hash check***\npwd_hash {pwd_hash}\n{ts} := {hash_final}\n')
-				res=dialog(command='login',method='post',data={'username':usr,'hash':hash_final})
+				res=dialog(method='post',command='login',data={'username':usr,'hash':hash_final})
 				print(msg:=res['message'])
 				if msg.startswith('Caution'):
 					logging.warning('ADMIN login')
@@ -156,7 +167,7 @@ def log_or_reg():
 		) # pwd -> hash -> timestamped-hash
 		hash_final=crpt.hexdigest()
 		if T: print(f'\n***hash check***\npwd_hash {pwd_hash}\n{ts} := {hash_final}\n')
-		res=dialog(command='login',method='post',data={'username':usr,'hash':hash_final})
+		res=dialog(method='post',command='login',data={'username':usr,'hash':hash_final})
 		print(msg:=res['message'])
 		# local config should guarantee user existence in server, with the correct password
 		assert msg.startswith('Successful'),'LocalConfigLoginError'
@@ -175,7 +186,7 @@ def log_or_reg():
 ALIVE=True # program keep-alive
 def keep_conn(interval:int|float):
 	while ALIVE:
-		dialog(command='keep',method='post',data={'username':USR})
+		dialog(method='post',command='keep',data={'username':USR})
 		sleep(interval)
 
 CUR_RM='' # the current room the user is now in
@@ -186,7 +197,7 @@ def command_cycle():
 	global REC,CUR_RM,CUR_GM,CMD_LS
 	print('\nNow you\'ve entered the command cycle.')
 	print('Getting full command list...'); sleep(0.7)
-	res=dialog(command='get_cmd_ls',method='get')
+	res=dialog(method='get',command='get_cmd_ls')
 	print(res['message'])
 	CMD_LS=res['data']['commands'].split() # command list
 	cmd_des=res['data']['description'] # command description
@@ -208,12 +219,12 @@ def command_cycle():
 			case 'public'|'p':
 				msg=input('Enter the message you want to say to everyone :=\n')
 				logging.debug(f'p_msg: {msg}')
-				res=dialog(command='pub_chat',method='post',data={'username':USR,'message':msg})
+				res=dialog(method='post',command='pub_chat',data={'username':USR,'message':msg})
 				print(res['message'])
 				REC[0]+=1
 			case 'enter'|'e':
 				if CUR_RM: print('Already in a room!'); continue
-				res=dialog(command='get_rms',method='get')
+				res=dialog(method='get',command='get_rms')
 				print(res['message'])
 				print('Existing rooms:')
 				rm_ls=res['data']['rooms'].split('&')
@@ -231,35 +242,35 @@ def command_cycle():
 						REC[1][rm]=0 # initialize room history read position record
 					if rm in rm_ls: # room exists in server
 						logging.debug(f'e: {rm}')
-						res=dialog(command='enter',method='post',data={'username':USR,'roomid':rm})
+						res=dialog(method='post',command='enter',data={'username':USR,'roomid':rm})
 					else: # room doesn't exist, thus create it
 						logging.debug(f'c: {rm}')
-						res=dialog(command='create',method='post',data={'username':USR,'roomid':rm})
+						res=dialog(method='post',command='create',data={'username':USR,'roomid':rm})
 					print(res['message'])
 			case 'room'|'r':
 				if not CUR_RM: print('Not in a room yet!'); continue
 				msg=input('Enter the message you want to say to your room members :=\n')
 				logging.debug(f'r_msg: {msg}')
-				res=dialog(command='rm_chat',method='post',data={'username':USR,'message':msg})
+				res=dialog(method='post',command='rm_chat',data={'username':USR,'message':msg})
 				print(res['message'])
 				REC[1][CUR_RM]+=1
 			case 'leave'|'l':
 				if not CUR_RM: print('Not in a room yet!'); continue
 				CUR_RM='' # resets room
-				res=dialog(command='leave',method='post',data={'username':USR})
+				res=dialog(method='post',command='leave',data={'username':USR})
 				print(res['message'])
 			case 'setup'|'game_setup'|'s'|'gsu': # game choosing and setup; for Room Hosts only
 				if not CUR_RM: print('Not in a room yet!'); continue
 				if CUR_GM:
 					print('Already loaded a game in current room! Please get ready!'); continue
-				res=dialog(command='get_gms',method='get') # should return with ['data']['games']=' '.join(games_list)
+				res=dialog(method='get',command='get_gms') # should return with ['data']['games']=' '.join(games_list)
 				print(res['message'])
 				print('Games available: '+res['data']['games'])
 				game=input('Enter the game you want to play:\n')
 				logging.debug(f'gsu: {game}')
 				if game in res['data']['games'].split():
 					# first get required args for game setup
-					res=dialog(command='get_gm_req',method='get',data={'game':game}) # no need to verify if host or not
+					res=dialog(method='get',command='get_gm_req',data={'game':game}) # no need to verify if host or not
 					print(res['message'])
 					print('Required params for game setup:\n'+(req:=res['data']['required'])) # req uses sep==','
 					params=input('Please input the proper params for gameplay:\n')
@@ -267,7 +278,7 @@ def command_cycle():
 						print('Parameter count error!')
 						params=input('Please input the proper params for gameplay:\n')
 					logging.debug(f'params: {params}')
-					res=dialog(command='gm_setup',method='post',data={
+					res=dialog(method='post',command='gm_setup',data={
 						'username':USR,'game':game,'params':params}) # param checking done by server
 					print(msg:=res['message'])
 					if msg.startswith('Successful'): # game-setup request fulfilled
@@ -277,12 +288,12 @@ def command_cycle():
 			case 'ready'|'game_ready'|'rd'|'gr': # getting ready for gameplay
 				if not CUR_GM:
 					print('Game not set up yet!'); continue
-				res=dialog(command='gm_ready',method='post',data={'username':USR})
+				res=dialog(method='post',command='gm_ready',data={'username':USR})
 				print(res['message'])
 			case 'start'|'game_start'|'st'|'gst':
 				if not CUR_GM:
 					print('Game not set up yet!'); continue
-				res=dialog(command='gm_start',method='post',data={'username':USR})
+				res=dialog(method='post',command='gm_start',data={'username':USR})
 				print(res['message'])
 				# TBD: remember to remove (reset) GM_MOD after game ends
 			case _:
@@ -290,7 +301,7 @@ def command_cycle():
 					match cmd:
 						case 'get_pub_msg':
 							pub_rec=REC[0]
-							res=dialog(command=cmd,method='get',data={'last':pub_rec})
+							res=dialog(method='get',command=cmd,data={'last':pub_rec})
 							print(res['message'])
 							pub_msg=res['data']['messages']
 							if pub_msg:
@@ -298,7 +309,7 @@ def command_cycle():
 								REC[0]+=len(pub_msg.split('\n'))
 						case 'get_rm_msg':
 							rm_rec=REC[1][CUR_RM]
-							res=dialog(command=cmd,method='get',data={'username':USR,'last':rm_rec})
+							res=dialog(method='get',command=cmd,data={'username':USR,'last':rm_rec})
 							print(res['message'])
 							rm_msg=res['data']['messages']
 							if rm_msg:
@@ -315,7 +326,7 @@ def msg_refr(interval:int|float): # refreshes, if to receive new chat messages
 	while ALIVE:
 		if CUR_RM:
 			rm_rec=REC[1][CUR_RM]
-			res=dialog(command='get_rm_msg',method='get',data={'username':USR,'last':rm_rec})
+			res=dialog(method='get',command='get_rm_msg',data={'username':USR,'last':rm_rec})
 			if T: print(res['message'])
 			rm_msg=res['data']['messages']
 			if rm_msg:
@@ -324,7 +335,7 @@ def msg_refr(interval:int|float): # refreshes, if to receive new chat messages
 				      '-------------     Message Ends     -------------\n')
 				REC[1][CUR_RM]+=len(rm_msg.split('\n'))
 		pub_rec=REC[0]
-		pub_msg=dialog(command='get_pub_msg',method='get',data={'last':pub_rec})['data']['messages']
+		pub_msg=dialog(method='get',command='get_pub_msg',data={'last':pub_rec})['data']['messages']
 		if pub_msg:
 			print('\n-------------     New Public Messages!     -------------'
 			      +pub_msg+'\n'+
@@ -339,7 +350,7 @@ def __get_gm_rd(interval:int|float): # comes into effect on room entrance, and s
 	while ALIVE:
 		if CUR_RM:
 			if not GM_MOD: # in room, game not started
-				res=dialog(command='get_gm_rd',method='get',data={'username':USR})
+				res=dialog(method='get',command='get_gm_rd',data={'username':USR})
 				if T: print(res['message'])
 				data=res['data'] # might be empty if game not set up
 				if data and not CUR_GM:
@@ -357,7 +368,7 @@ def __get_gm_st(interval:int|float): # comes into effect on game start, and fade
 	global GM_ST
 	while ALIVE:
 		if GM_MOD:
-			res=dialog(command='get_gm_st',method='get',data={'username':USR,'last':GM_ST['info'][0]})
+			res=dialog(method='get',command='get_gm_st',data={'username':USR,'last':GM_ST['info'][0]})
 			if T: print(res['message'])
 			data=res['data']
 			if data:
@@ -370,7 +381,7 @@ def __get_gm_st(interval:int|float): # comes into effect on game start, and fade
 					GM_ST['player']=data['status'] # replace old user_status
 					decision=GM_MOD.handle_status(GM_ST[1]) # decision-making; temporarily no time limit
 					if decision:
-						res=dialog(command='gm_op',method='post',data={'username':USR,'operation':decision})
+						res=dialog(method='post',command='gm_op',data={'username':USR,'operation':decision})
 						print(res['message'])
 		else: # game ends
 			return True
@@ -390,7 +401,7 @@ def terminate(): # includes exit() method
 	logging.info('terminating program')
 	global ALIVE
 	ALIVE=False
-	res=dialog(command='logout',method='post',data={'username':USR})
+	res=dialog(method='post',command='logout',data={'username':USR})
 	logging.debug('user logout')
 	print(res['message'])
 	EXECUTOR.shutdown(cancel_futures=True)
@@ -461,8 +472,9 @@ if __name__=='__main__':
 	logging.debug(f'T: {T}')
 	print('\nClient version : '+CLIENT_VERSION+'\n'); sleep(0.7)
 	try:
-		print(dialog(command='try',method='post')['message'])
-		logging.debug('cmd=try, server online')
+		print(trial:=dialog(method='post',command='try')['message'])
+		assert trial.startswith('Successful')
+		logging.debug('trial passed')
 		print("\nWelcome to Varisox137's server! (still improving yet)"); sleep(0.7)
 		log_or_reg() # login or registration, USR set
 		sleep(1)
