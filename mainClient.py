@@ -6,15 +6,17 @@ import os # module
 import logging # module
 import httpx # modules
 # import asyncio # module
-from urllib.parse import unquote_plus as uqp # func
-# from json import dumps as jd, loads as jl # func
+
+# from Crypto.PublicKey import RSA # module
+# from Crypto.Cipher import PKCS1_OAEP # module
+from json import dumps as jd, loads as jl # func
 
 # import bwpgrb.bwpMain
 
 # real globals, should never be changed
 CLIENT_VERSION='230724' # ALWAYS remember to update server cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
-CLI=httpx.Client(headers={
+CLI=httpx.Client(timeout=5,headers={
 	'Connection': 'keep-alive',
 	'Content-Type': 'text/plain',
 	'Client-Version': CLIENT_VERSION
@@ -31,30 +33,14 @@ EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading pool executor
 def dialog(method:str,command:str,data:dict=None):
 	logging.debug(f'method={method}, command={command}, data={data}')
 
-	def urldecode(s:str):
-# no need to set the split() param: maxsplit, as res_dict['data'] should have already been url-encoded, e.g. '&'->'%26'
-		d={}
-		if s: d.update(list(map(lambda x:(uqp((m:=x.split('='))[0]),uqp(m[1])),s.split('&'))))
-		logging.debug(f"url-decoded: from '{s}' to '{str(d)}'")
-		return d
-
 	if data is None: data=dict()
 	assert (('method' not in data) and ('command' not in data)), 'KeyError in dialog data: conflict with reserved key.'
 	data['method']=method
 	data['command']=command
 
-	# DEPRECATED
-	# data_enc=ps.urlencode(data).encode('utf-8')
-	# request=rq.Request(url=URL,data=data_enc,headers=headers,method=method.upper()) # http method should be upper case
-	# logging.debug('Request object constructed')
-	# response=rq.urlopen(request).read().decode()
-
-	# new
-	with CLI as client: # context management
-		response=client.post(url=URL,data=data) # use POST only, for security
+	response=CLI.post(url=URL,content=jd(data).encode()) # use POST only, for security
 	logging.debug(f'response acquired: {response}') # 'response' should be a Response object
-	res_dict=urldecode(response.read().decode('utf-8'))
-	res_dict['data']=urldecode(res_dict['data'])
+	res_dict=jl(response.read().decode('utf-8'))
 	return res_dict
 
 USR='' # username
@@ -404,11 +390,10 @@ def terminate(): # includes exit() method
 	res=dialog(method='post',command='logout',data={'username':USR})
 	logging.debug('user logout')
 	print(res['message'])
-	EXECUTOR.shutdown(cancel_futures=True)
 	logging.debug('TPE shutdown')
 	sleep(1)
-	input('Program finished, press enter to quit......\n')
-	os._exit(1)
+	input('\nProgram finished, press enter to quit......\n')
+	EXECUTOR.shutdown(cancel_futures=True)
 
 def handle_error(err: Exception):
 	logging.info(f'handling error: {err}')
