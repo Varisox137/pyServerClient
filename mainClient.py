@@ -14,9 +14,9 @@ from json import dumps as jd, loads as jl # func
 # import bwpgrb.bwpMain
 
 # real globals, should never be changed
-CLIENT_VERSION='230724' # ALWAYS remember to update server cli-ver !!!
+CLIENT_VERSION='230811' # ALWAYS remember to update server cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
-CLI=httpx.Client(timeout=5,headers={
+CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
 	'Content-Type': 'text/plain',
 	'Client-Version': CLIENT_VERSION
