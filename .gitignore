@@ -2,5 +2,6 @@
 .idea/
 __pycache__/
 log/
-packer_20230717b1.exe
+*.exe
+*.dat
 pack_config.txt
