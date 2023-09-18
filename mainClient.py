@@ -2,28 +2,28 @@ from concurrent.futures import ThreadPoolExecutor # class
 from time import sleep # func
 from importlib import import_module as imm # func
 from datetime import datetime as dt # module
+from json import dumps as jd, loads as jl # func
 import os # module
 import logging # module
 import httpx # modules
+
 # import asyncio # module
 
 # from Crypto.PublicKey import RSA # module
 # from Crypto.Cipher import PKCS1_OAEP # module
-from json import dumps as jd, loads as jl # func
 
 # import bwpgrb.bwpMain
 
-# real globals, should never be changed
-CLIENT_VERSION='230815' # ALWAYS remember to update server cli-ver !!!
+CLIENT_VERSION='230918' # ALWAYS remember to update server acceptable cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
 	'Content-Type': 'text/plain',
-	'Client-Version': CLIENT_VERSION
+	'Client-Version': CLIENT_VERSION+'c' # console
 }) # reuses everytime
 
 GAMES=('Mahjong',) # module name, available offline-mode games, still developing & adding
-INTV={'keep':5,'msg':1,'gmrd':1,'gmst':3} # interval constants for periodic requests
+INTV={'keep':2,'msg':3,'gmrd':5,'gmst':3} # interval constants for periodic requests
 LOG_LIM=7 # day limit for removal of logs too old
 MAX_WK=5 # TPE max worker number
 EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading pool executor
@@ -36,13 +36,18 @@ def dialog(method:str,command:str,data:dict=None):
 	logging.debug(f'method={method}, command={command}, data={data}')
 
 	if data is None: data=dict()
-	assert (('method' not in data) and ('command' not in data)), 'KeyError in dialog data: conflict with reserved key.'
 	data['method']=method
 	data['command']=command
 
+	if T:
+		URL='http://127.0.0.1:1037'
+		CLI.headers.update({'User-Agent':'testing'})
+		CLI.timeout=100000
+
+	# will look for the global URL if not T
 	response=CLI.post(url=URL,content=jd(data).encode()) # use POST only, for security
 	logging.debug(f'response acquired: {response}') # 'response' should be a Response object
-	res_dict=jl(response.read().decode('utf-8'))
+	res_dict=jl(response.read().decode())
 	return res_dict
 
 USR='' # username
@@ -54,13 +59,28 @@ def log_or_reg():
 	# try to get local config first
 	usr=''
 	pwd=''
+	# new version: binary files (no encryption)
+	has_config=[False,False]
+	try:
+		with open(os.environ[base[os.name]]+'/vsx.cfg.dll','rb') as config:
+			logging.debug('binary config found')
+			while usr:=config.readline().strip().decode():
+				loc_usrs.append((usr,config.readline().strip().decode()))
+			logging.debug('binary config loaded')
+		has_config[0]=True
+	except FileNotFoundError:
+		logging.debug('no binary config')
+	# backward-compatibility: looks for .cfg text file
 	try: # attempt to find local config
 		with open(os.environ[base[os.name]]+'/vsxClient.cfg','r',encoding='utf-8') as config:
-			while usr:=config.readline().strip(): # username
-				loc_usrs.append((usr,config.readline().strip())) # password
-		logging.debug('local config found')
+			logging.debug('text config found')
+			if not has_config[0]: # no new-version encrypted binary config
+				while usr:=config.readline().strip(): # username
+					loc_usrs.append((usr,config.readline().strip())) # password
+				logging.debug('text config loaded')
+		has_config[1]=True
 	except FileNotFoundError:
-		logging.debug('no local config')
+		logging.debug('no text config')
 	if loc_usrs: # local config has content
 		OUTPUT('\nLocal config found !'); sleep(0.7)
 		OUTPUT('\nExisting local users:')
@@ -166,15 +186,19 @@ def log_or_reg():
 	if usr!='admin': # admin mustn't be recorded into config
 		if usr not in list(map(lambda x:x[0],loc_usrs)):
 			loc_usrs.append((usr,pwd))
-	with open(os.environ[base[os.name]]+'/vsxClient.cfg','w',encoding='utf-8') as config:
+	with open(os.environ[base[os.name]]+'/vsx.cfg.dll','wb') as config: # new version of local config
 		for each in loc_usrs:
-			config.writelines((each[0]+'\n',each[1]+'\n'))
+			config.write((each[0]+'\n'+each[1]+'\n').encode())
 	logging.info('config updated')
+	if has_config[1]: # has old config, deletes it
+		os.remove(os.environ[base[os.name]]+'/vsxClient.cfg')
+		logging.info('deprecated config deleted')
 
 ALIVE=True # program keep-alive
 def keep_conn(interval:int|float):
 	while ALIVE:
-		dialog(method='post',command='keep',data={'username':USR})
+		if USR:
+			dialog(method='post',command='keep',data={'username':USR})
 		sleep(interval)
 
 CUR_RM='' # the current room the user is now in
@@ -182,7 +206,7 @@ CUR_GM='' # the current game of the room the user is in; initialized as '' (no g
 CMD_LS=[] # available command list
 def command_cycle():
 	logging.info('enters command cycle')
-	global REC,CUR_RM,CUR_GM,CMD_LS
+	global REC,CUR_RM,CUR_GM,CMD_LS,GM_MOD
 	OUTPUT('\nNow you\'ve entered the command cycle.')
 	OUTPUT('Getting full command list...'); sleep(0.7)
 	res=dialog(method='get',command='get_cmd_ls')
@@ -216,8 +240,8 @@ def command_cycle():
 				OUTPUT(res['message'])
 				OUTPUT('Existing rooms:')
 				rm_ls=res['data']['rooms'].split('&')
-				OUTPUT('\n'.join(rm_ls) if rm_ls else '\n')
-				OUTPUT('Enter the id of an existing room you want to enter...')
+				OUTPUT('\n'.join(rm_ls) if rm_ls else '\n'); sleep(0.7)
+				OUTPUT('\nEnter the id of an existing room you want to enter...')
 				OUTPUT('...or a new id for a new room you want to create...')
 				OUTPUT('...in both cases the id must be consist of only alphabets and numbers...')
 				OUTPUT('...and also with a minimum length of 4.'); sleep(0.7)
@@ -301,8 +325,21 @@ def command_cycle():
 							OUTPUT(res['message'])
 							rm_msg=res['data']['messages']
 							if rm_msg:
-								OUTPUT(rm_msg + '\n')
+								OUTPUT('\n' + rm_msg + '\n')
 								REC[1][CUR_RM]+=len(rm_msg.split('\n'))
+						case 'get_gm_rd': # copied from method
+							if CUR_RM:
+								if not GM_MOD:  # in room, game not started
+									res = dialog(method='get', command='get_gm_rd', data={'username': USR})
+									if T: OUTPUT(res['message'])
+									data = res['data']  # might be empty if game not set up
+									if data and not CUR_GM:
+										CUR_GM = data[
+											'name']  # no output here, since sys msg is added when host set up the game
+									if 'ready' in data:
+										OUTPUT('\nCurrent players ready for the game:\n' + (data['ready'] or 'None'))
+									else:  # game started
+										GM_MOD = imm(CUR_GM + '4Client')  # imports the local game module
 						case _:
 							OUTPUT('Command incorrect !')
 				elif cmd not in CMD_LS: OUTPUT('Command incorrect!')
@@ -315,21 +352,19 @@ def msg_refr(interval:int|float): # refreshes, if to receive new chat messages
 		if USR:
 			if CUR_RM:
 				rm_rec=REC[1][CUR_RM]
-				res=dialog(method='get',command='get_rm_msg',data={'username':USR,'last':rm_rec})
-				if T: OUTPUT(res['message'])
-				rm_msg=res['data']['messages']
+				rm_msg=dialog(method='get',command='get_rm_msg',data={'username':USR,'last':rm_rec})['data']['messages']
 				if rm_msg:
-					OUTPUT('\n-------------     New Room Message!     -------------'
-						   + rm_msg +'\n' +
-						  '-------------     Message Ends     -------------\n')
-					REC[1][CUR_RM]+=len(rm_msg.split('\n'))
+					OUTPUT('\n-------------     New Room Message!     -------------\n'
+						   + rm_msg +
+						  '\n-------------     Message Ends     -------------\n')
+					REC[1][CUR_RM]+=len(rm_msg.split('\n\n'))
 			pub_rec=REC[0]
 			pub_msg=dialog(method='get',command='get_pub_msg',data={'last':pub_rec})['data']['messages']
 			if pub_msg:
-				OUTPUT('\n-------------     New Public Message!     -------------'
-					   + pub_msg +'\n' +
-					  '-------------     Message Ends     -------------\n')
-				REC[0]+=len(pub_msg.split('\n'))
+				OUTPUT('\n-------------     New Public Message!     -------------\n'
+					   + pub_msg +
+					  '\n-------------     Message Ends     -------------\n')
+				REC[0]+=len(pub_msg.split('\n\n'))
 		sleep(interval)
 
 GM_ST={'info_rec':0,'player':''} # in-game status
@@ -362,10 +397,10 @@ def __get_gm_st(interval:int|float): # comes into effect on game start, and fade
 			data=res['data']
 			if data:
 				if info:=data['info']: # data['info'] is unread sys info ('\n'-joined); can be empty
-					OUTPUT('\n-------------     New GameSys Message!     -------------'
+					OUTPUT('\n-------------     New GameSys Message!     -------------\n'
 						   + info +  # refreshes public game_sys information, such as who did what
-						  '\n-------------     Message Ends     -------------\n')
-					GM_ST['info_rec']+=len(data['info'].split('\n'))
+						   '\n-------------     Message Ends     -------------\n')
+					GM_ST['info_rec']+=len(data['info'].split('\n\n'))
 				if GM_ST['player']!=data['status']:
 					GM_ST['player']=data['status'] # replace old user_status
 					decision=GM_MOD.handle_status(GM_ST[1]) # decision-making; temporarily no time limit
@@ -403,7 +438,8 @@ def handle_error(err: Exception):
 	if T: OUTPUT(type(err))
 	from urllib.error import URLError
 	from http.client import RemoteDisconnected
-	if SF:=isinstance(err, (URLError, RemoteDisconnected)): # server failed
+	from httpx import RemoteProtocolError
+	if SF:=isinstance(err, (URLError, RemoteDisconnected, RemoteProtocolError)): # server failed
 		OUTPUT("\nOops! Seems the server isn't online now......")
 	else:
 		OUTPUT('\nOops! An error has just occurred......')
@@ -452,7 +488,7 @@ def log_init():
 			cur_time=int(dt.now().strftime('%Y%m%d%H%M%S'))
 			if cur_time-file_time>LOG_LIM*100**3: # more than 7 days
 				os.remove(f'./log/{name}')
-	logging.info('cleanup logs from too long ago')
+	logging.info('cleaned up logs from too long ago')
 
 if __name__=='__main__':
 	log_init()
@@ -473,9 +509,9 @@ if __name__=='__main__':
 			EXECUTOR.submit(command_cycle)
 			EXECUTOR.submit(keep_conn,INTV['keep'])
 			EXECUTOR.submit(msg_refr,INTV['msg'])
-			EXECUTOR.submit(get_gm_pgrs)
+			get_gm_pgrs() # may not need to put into EXECUTOR?
 		else:
-			EXECUTOR.submit(keep_conn,INTV['keep']*60)
+			EXECUTOR.submit(keep_conn,INTV['keep']*30)
 			EXECUTOR.submit(command_cycle)
 	except Exception as e:
 		handle_error(e)
