@@ -14,7 +14,7 @@ import httpx # modules
 
 # import bwpgrb.bwpMain
 
-CLIENT_VERSION='230918' # ALWAYS remember to update server acceptable cli-ver !!!
+CLIENT_VERSION='230923' # ALWAYS remember to update server acceptable cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
@@ -33,6 +33,7 @@ OUTPUT=print
 # the capitalized pseudo-globals (defined closely before methods) are actually changeable, global-working variants
 
 def dialog(method:str,command:str,data:dict=None):
+	global URL
 	logging.debug(f'method={method}, command={command}, data={data}')
 
 	if data is None: data=dict()
@@ -42,7 +43,7 @@ def dialog(method:str,command:str,data:dict=None):
 	if T:
 		URL='http://127.0.0.1:1037'
 		CLI.headers.update({'User-Agent':'testing'})
-		CLI.timeout=100000
+		CLI.timeout=10000
 
 	# will look for the global URL if not T
 	response=CLI.post(url=URL,content=jd(data).encode()) # use POST only, for security
@@ -62,7 +63,7 @@ def log_or_reg():
 	# new version: binary files (no encryption)
 	has_config=[False,False]
 	try:
-		with open(os.environ[base[os.name]]+'/vsx.cfg.dll','rb') as config:
+		with open(os.environ[base[os.name]]+'/vsx.cfg.bin','rb') as config:
 			logging.debug('binary config found')
 			while usr:=config.readline().strip().decode():
 				loc_usrs.append((usr,config.readline().strip().decode()))
@@ -186,7 +187,7 @@ def log_or_reg():
 	if usr!='admin': # admin mustn't be recorded into config
 		if usr not in list(map(lambda x:x[0],loc_usrs)):
 			loc_usrs.append((usr,pwd))
-	with open(os.environ[base[os.name]]+'/vsx.cfg.dll','wb') as config: # new version of local config
+	with open(os.environ[base[os.name]]+'/vsx.cfg.bin','wb') as config: # new version of local config
 		for each in loc_usrs:
 			config.write((each[0]+'\n'+each[1]+'\n').encode())
 	logging.info('config updated')
@@ -240,7 +241,7 @@ def command_cycle():
 				OUTPUT(res['message'])
 				OUTPUT('Existing rooms:')
 				rm_ls=res['data']['rooms'].split('&')
-				OUTPUT('\n'.join(rm_ls) if rm_ls else '\n'); sleep(0.7)
+				OUTPUT('\n'.join(rm_ls) if rm_ls else '/\n'); sleep(0.7) # doesn't use 'None' as is a legal rid
 				OUTPUT('\nEnter the id of an existing room you want to enter...')
 				OUTPUT('...or a new id for a new room you want to create...')
 				OUTPUT('...in both cases the id must be consist of only alphabets and numbers...')
@@ -318,7 +319,7 @@ def command_cycle():
 							pub_msg=res['data']['messages']
 							if pub_msg:
 								OUTPUT(pub_msg + '\n')
-								REC[0]+=len(pub_msg.split('\n'))
+								REC[0]+=len(pub_msg.split('\n\n'))
 						case 'get_rm_msg':
 							rm_rec=REC[1][CUR_RM]
 							res=dialog(method='get',command=cmd,data={'username':USR,'last':rm_rec})
@@ -326,7 +327,7 @@ def command_cycle():
 							rm_msg=res['data']['messages']
 							if rm_msg:
 								OUTPUT('\n' + rm_msg + '\n')
-								REC[1][CUR_RM]+=len(rm_msg.split('\n'))
+								REC[1][CUR_RM]+=len(rm_msg.split('\n\n'))
 						case 'get_gm_rd': # copied from method
 							if CUR_RM:
 								if not GM_MOD:  # in room, game not started
@@ -439,8 +440,9 @@ def handle_error(err: Exception):
 	from urllib.error import URLError
 	from http.client import RemoteDisconnected
 	from httpx import RemoteProtocolError
-	if SF:=isinstance(err, (URLError, RemoteDisconnected, RemoteProtocolError)): # server failed
-		OUTPUT("\nOops! Seems the server isn't online now......")
+	from json import JSONDecodeError
+	if SF:=isinstance(err, (URLError, RemoteDisconnected, RemoteProtocolError, JSONDecodeError)): # server failed
+		OUTPUT("\nOops! Seems there's problem communicating with the server......")
 	else:
 		OUTPUT('\nOops! An error has just occurred......')
 	logging.debug(f'SF: {SF}')
