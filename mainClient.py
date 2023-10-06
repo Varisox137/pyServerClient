@@ -9,12 +9,9 @@ import httpx # modules
 
 # import asyncio # module
 
-# from Crypto.PublicKey import RSA # module
-# from Crypto.Cipher import PKCS1_OAEP # module
-
 # import bwpgrb.bwpMain
 
-CLIENT_VERSION='230923' # ALWAYS remember to update server acceptable cli-ver !!!
+CLIENT_VERSION='231007' # ALWAYS remember to update server acceptable cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
@@ -37,18 +34,35 @@ def dialog(method:str,command:str,data:dict=None):
 	logging.debug(f'method={method}, command={command}, data={data}')
 
 	if data is None: data=dict()
-	data['method']=method
-	data['command']=command
+	packed_data={'method':method, 'command':command}
 
 	if T:
 		URL='http://127.0.0.1:1037'
-		CLI.headers.update({'User-Agent':'testing'})
+		CLI.headers.update({'User-Agent':'test-only'})
 		CLI.timeout=10000
 
+	# new: asymmetric cipher
+	if command in ('try','key_exc'):
+		data_string=jd(data)
+	else:
+		data['pbkid']=CRPT.pbkid
+		data_string=repr(CRPT.public_encrypt(jd(data)))
+	packed_data['data']=data_string
+
 	# will look for the global URL if not T
-	response=CLI.post(url=URL,content=jd(data).encode()) # use POST only, for security
+	response=CLI.post(url=URL,content=jd(packed_data).encode()) # use POST only, for security
 	logging.debug(f'response acquired: {response}') # 'response' should be a Response object
-	res_dict=jl(response.read().decode())
+
+	# new parsing procedure for RSA encryption
+	direct_dict=jl(response.read().decode())
+	res_dict={'message':direct_dict['message']}
+	processed_data_string=direct_dict['data']
+	if command in ('try','key_exc'):
+		actual_data=jl(processed_data_string)
+	else:
+		actual_data=jl(CRPT.self_decrypt(eval(processed_data_string)))
+	res_dict['data']=actual_data
+
 	return res_dict
 
 USR='' # username
@@ -492,6 +506,38 @@ def log_init():
 				os.remove(f'./log/{name}')
 	logging.info('cleaned up logs from too long ago')
 
+
+# for encryption; custom object
+CRPT=None
+def exchange_keys():
+	from Crypto.PublicKey import RSA # module
+	from Crypto.Cipher import PKCS1_OAEP # module
+
+	class CommCrypto:
+		def __init__(self):
+			self.__self_key=RSA.generate(2048)
+			self.__self_decode_cipher=PKCS1_OAEP.new(self.__self_key)
+			logging.info('self key and cipher generated')
+			res=dialog(
+				method='post',command='key_exc',
+				data={'public_key':self.__self_key.public_key().export_key().decode()}
+			)
+			print(res['message'])
+			self.pbkid=res['data']['pbkid']
+			self._received_public_keystring=res['data']['public_key']
+			self._public_key=RSA.import_key(self._received_public_keystring)
+			self._public_encode_cipher=PKCS1_OAEP.new(self._public_key)
+			logging.info('server pubkey and cipher acquired')
+
+		def self_decrypt(self,encrypted:bytes) -> str:
+			return self.__self_decode_cipher.decrypt(encrypted).decode()
+
+		def public_encrypt(self,data_string:str) -> bytes:
+			return self._public_encode_cipher.encrypt(data_string.encode())
+
+	global CRPT
+	CRPT=CommCrypto()
+
 if __name__=='__main__':
 	log_init()
 	T=bool(input('test mode ?')); sleep(0.7)
@@ -502,6 +548,8 @@ if __name__=='__main__':
 		assert trial.startswith('Successful')
 		logging.debug('trial passed')
 		OUTPUT("\nWelcome to Varisox137's server! (still improving yet)"); sleep(0.7)
+		exchange_keys()
+		print('\nEncrypted communication established.'); sleep(0.7)
 		log_or_reg() # login or registration, USR set
 		sleep(1)
 		if USR=='admin':
