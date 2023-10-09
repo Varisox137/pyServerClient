@@ -11,7 +11,7 @@ import httpx # modules
 
 # import bwpgrb.bwpMain
 
-CLIENT_VERSION='231007' # ALWAYS remember to update server acceptable cli-ver !!!
+CLIENT_VERSION='231009' # ALWAYS remember to update server acceptable cli-ver !!!
 URL='https://n6944f2933.imdo.co/' # unchanging unless testing
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
