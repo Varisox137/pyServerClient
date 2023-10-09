@@ -6,10 +6,10 @@
 
 ### Features
 
-- Instant messaging: lobby or in-room
+- Instant messaging: Lobby or in-room
 - Automatic online-checks by multithreading
-- Communication safety: using asymmetric encryption systems
-- Gaming supports (under development)
+- Communication safety: Using asymmetric encryption systems (Now without a length limit)
+- Gaming supports (Still under development......)
 
 ### Requirements
 

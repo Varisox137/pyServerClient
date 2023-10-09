@@ -34,7 +34,9 @@ def dialog(method:str,command:str,data:dict=None):
 	logging.debug(f'method={method}, command={command}, data={data}')
 
 	if data is None: data=dict()
-	packed_data={'method':method, 'command':command}
+	data['method']=method
+	data['command']=command
+	packed_data={'pbkid':''}
 
 	if T:
 		URL='http://127.0.0.1:1037'
@@ -45,9 +47,9 @@ def dialog(method:str,command:str,data:dict=None):
 	if command in ('try','key_exc'):
 		data_string=jd(data)
 	else:
-		data['pbkid']=CRPT.pbkid
-		data_string=repr(CRPT.public_encrypt(jd(data)))
-	packed_data['data']=data_string
+		packed_data['pbkid']=CRPT.pbkid
+		data_string=repr(CRPT.encrypt(jd(data)))
+	packed_data['data_string']=data_string
 
 	# will look for the global URL if not T
 	response=CLI.post(url=URL,content=jd(packed_data).encode()) # use POST only, for security
@@ -55,13 +57,12 @@ def dialog(method:str,command:str,data:dict=None):
 
 	# new parsing procedure for RSA encryption
 	direct_dict=jl(response.read().decode())
-	res_dict={'message':direct_dict['message']}
 	processed_data_string=direct_dict['data']
 	if command in ('try','key_exc'):
 		actual_data=jl(processed_data_string)
 	else:
-		actual_data=jl(CRPT.self_decrypt(eval(processed_data_string)))
-	res_dict['data']=actual_data
+		actual_data=jl(CRPT.decrypt(eval(processed_data_string)))
+	res_dict={'message':direct_dict['message'],'data':actual_data}
 
 	return res_dict
 
@@ -513,7 +514,7 @@ def exchange_keys():
 	from Crypto.PublicKey import RSA # module
 	from Crypto.Cipher import PKCS1_OAEP # module
 
-	class CommCrypto:
+	class MyCrypto:
 		def __init__(self):
 			self.__self_key=RSA.generate(2048)
 			self.__self_decode_cipher=PKCS1_OAEP.new(self.__self_key)
@@ -529,14 +530,29 @@ def exchange_keys():
 			self._public_encode_cipher=PKCS1_OAEP.new(self._public_key)
 			logging.info('server pubkey and cipher acquired')
 
-		def self_decrypt(self,encrypted:bytes) -> str:
-			return self.__self_decode_cipher.decrypt(encrypted).decode()
+		def decrypt(self,encrypted:bytes) -> str:
+			groups=[]
+			# from the module we know that each fragment is encrypted into a 256-byte ciphertext
+			while len(encrypted)>256:
+				groups.append(encrypted[:256])
+				encrypted=encrypted[256:]
+			groups.append(encrypted)
 
-		def public_encrypt(self,data_string:str) -> bytes:
-			return self._public_encode_cipher.encrypt(data_string.encode())
+			return b''.join([self.__self_decode_cipher.decrypt(data) for data in groups]).decode()
+
+		def encrypt(self,data_string:str) -> bytes:
+			encoded=data_string.encode()
+			groups=[]
+			# from the module we know that the max encryption length is 256-2*20-2 bytes
+			while len(encoded)>214:
+				groups.append(encoded[:214])
+				encoded=encoded[214:]
+			groups.append(encoded)
+
+			return b''.join([self._public_encode_cipher.encrypt(data) for data in groups])
 
 	global CRPT
-	CRPT=CommCrypto()
+	CRPT=MyCrypto()
 
 if __name__=='__main__':
 	log_init()
