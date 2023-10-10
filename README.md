@@ -15,8 +15,7 @@
 
 ##### Python Interpreter
 
-- 3.10+ , for Structural Pattern Matching (match-case)
-- Note that future versions may require 3.12+ for enhanced f-string usage.
+- Now changed to 3.8, for building the Android apk using briefcase.
 
 ##### Non-builtin Libraries
 

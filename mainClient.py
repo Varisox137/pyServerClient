@@ -11,8 +11,9 @@ import httpx # modules
 
 # import bwpgrb.bwpMain
 
-CLIENT_VERSION='231009' # ALWAYS remember to update server acceptable cli-ver !!!
-URL='https://n6944f2933.imdo.co/' # unchanging unless testing
+# the following globals should be constant objects throughout the program
+CLIENT_VERSION='231010' # ALWAYS remember to update server acceptable cli-ver !!!
+URL='https://n6944f2933.imdo.co/'
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
 	'Content-Type': 'text/plain',
@@ -27,9 +28,21 @@ EXECUTOR=ThreadPoolExecutor(max_workers=MAX_WK) # multi-threading pool executor
 
 OUTPUT=print
 
-# the capitalized pseudo-globals (defined closely before methods) are actually changeable, global-working variants
+# the following globals are actually changeable, global-working variants
+T=False # test flag
+USR='' # username
+ALIVE=True # program keep-alive
+REC=[0,{}] # chat history record (the position of already-read/last-received messages)
+CUR_RM='' # the current room the user is now in
+CUR_GM='' # the current game of the room the user is in; initialized as '' (no game)
+CMD_LS=[] # available command list
+GM_ST={'info_rec':0,'player':''} # in-game status
+GM_MOD=None # should be of type 'module'
+CRPT=None # custom encryption
 
-def dialog(method:str,command:str,data:dict=None):
+# core method
+def dialog(method:str,command:str,data:dict=None,
+		   t=T,client=CLI,crpt=CRPT):
 	global URL
 	logging.debug(f'method={method}, command={command}, data={data}')
 
@@ -38,21 +51,21 @@ def dialog(method:str,command:str,data:dict=None):
 	data['command']=command
 	packed_data={'pbkid':''}
 
-	if T:
+	if t:
 		URL='http://127.0.0.1:1037'
-		CLI.headers.update({'User-Agent':'test-only'})
-		CLI.timeout=10000
+		client.headers.update({'User-Agent':'test-only'})
+		client.timeout=10000
 
 	# new: asymmetric cipher
 	if command in ('try','key_exc'):
 		data_string=jd(data)
 	else:
-		packed_data['pbkid']=CRPT.pbkid
-		data_string=repr(CRPT.encrypt(jd(data)))
+		packed_data['pbkid']=crpt.pbkid
+		data_string=repr(crpt.encrypt(jd(data)))
 	packed_data['data_string']=data_string
 
 	# will look for the global URL if not T
-	response=CLI.post(url=URL,content=jd(packed_data).encode()) # use POST only, for security
+	response=client.post(url=URL,content=jd(packed_data).encode()) # use POST only, for security
 	logging.debug(f'response acquired: {response}') # 'response' should be a Response object
 
 	# new parsing procedure for RSA encryption
@@ -61,12 +74,11 @@ def dialog(method:str,command:str,data:dict=None):
 	if command in ('try','key_exc'):
 		actual_data=jl(processed_data_string)
 	else:
-		actual_data=jl(CRPT.decrypt(eval(processed_data_string)))
+		actual_data=jl(crpt.decrypt(eval(processed_data_string)))
 	res_dict={'message':direct_dict['message'],'data':actual_data}
 
 	return res_dict
 
-USR='' # username
 def log_or_reg():
 	logging.info('begin logging in or registration')
 	global USR
@@ -210,16 +222,12 @@ def log_or_reg():
 		os.remove(os.environ[base[os.name]]+'/vsxClient.cfg')
 		logging.info('deprecated config deleted')
 
-ALIVE=True # program keep-alive
-def keep_conn(interval:int|float):
+def keep_conn(interval):
 	while ALIVE:
 		if USR:
 			dialog(method='post',command='keep',data={'username':USR})
 		sleep(interval)
 
-CUR_RM='' # the current room the user is now in
-CUR_GM='' # the current game of the room the user is in; initialized as '' (no game)
-CMD_LS=[] # available command list
 def command_cycle():
 	logging.info('enters command cycle')
 	global REC,CUR_RM,CUR_GM,CMD_LS,GM_MOD
@@ -241,128 +249,125 @@ def command_cycle():
 		OUTPUT('...but luckily the cases of input doesn\'t matter, which is good news.'); sleep(0.7)
 		cmd=input('\nYour command ?=\n').lower(); sleep(0.7)
 		logging.debug(f'wT with cmd: {cmd}')
-		match cmd:
-			case 'quit'|'q':
-				terminate()
-			case 'public'|'p':
-				msg=input('Enter the message you want to say to everyone :=\n')
-				logging.debug(f'p_msg: {msg}')
-				res=dialog(method='post',command='pub_chat',data={'username':USR,'message':msg})
+		if cmd in ('quit','q'):
+			terminate()
+		elif cmd in ('public','p'):
+			msg=input('Enter the message you want to say to everyone :=\n')
+			logging.debug(f'p_msg: {msg}')
+			res=dialog(method='post',command='pub_chat',data={'username':USR,'message':msg})
+			OUTPUT(res['message'])
+			REC[0]+=1
+		elif cmd in ('enter','e'):
+			if CUR_RM: OUTPUT('Already in a room!'); continue
+			res=dialog(method='get',command='get_rms')
+			OUTPUT(res['message'])
+			OUTPUT('Existing rooms:')
+			rm_ls=res['data']['rooms'].split('&')
+			OUTPUT('\n'.join(rm_ls) if rm_ls else '/\n'); sleep(0.7) # doesn't use 'None' as is a legal rid
+			OUTPUT('\nEnter the id of an existing room you want to enter...')
+			OUTPUT('...or a new id for a new room you want to create...')
+			OUTPUT('...in both cases the id must be consist of only alphabets and numbers...')
+			OUTPUT('...and also with a minimum length of 4.'); sleep(0.7)
+			rm=input('RoomID ?=\n')
+			if len(rm)<4 or not rm.isalnum():
+				OUTPUT('RoomID illegal !')
+			else:
+				CUR_RM=rm # mark current room
+				if rm not in list(REC[1].keys()): # haven't entered this room during this login
+					REC[1][rm]=0 # initialize room history read position record
+				if rm in rm_ls: # room exists in server
+					logging.debug(f'e: {rm}')
+					res=dialog(method='post',command='enter',data={'username':USR,'roomid':rm})
+				else: # room doesn't exist, thus create it
+					logging.debug(f'c: {rm}')
+					res=dialog(method='post',command='create',data={'username':USR,'roomid':rm})
 				OUTPUT(res['message'])
-				REC[0]+=1
-			case 'enter'|'e':
-				if CUR_RM: OUTPUT('Already in a room!'); continue
-				res=dialog(method='get',command='get_rms')
+		elif cmd in ('room','r'):
+			if not CUR_RM: OUTPUT('Not in a room yet!'); continue
+			msg=input('Enter the message you want to say to your room members :=\n')
+			logging.debug(f'r_msg: {msg}')
+			res=dialog(method='post',command='rm_chat',data={'username':USR,'message':msg})
+			OUTPUT(res['message'])
+			REC[1][CUR_RM]+=1
+		elif cmd in ('leave','l'):
+			if not CUR_RM: OUTPUT('Not in a room yet!'); continue
+			CUR_RM='' # resets room
+			res=dialog(method='post',command='leave',data={'username':USR})
+			OUTPUT(res['message'])
+		elif cmd in ('setup','game_setup','s','gsu'): # game choosing and setup; for Room Hosts only
+			if not CUR_RM: OUTPUT('Not in a room yet!'); continue
+			if CUR_GM:
+				OUTPUT('Already loaded a game in current room! Please get ready!'); continue
+			res=dialog(method='get',command='get_gms') # should return with ['data']['games']=' '.join(games_list)
+			OUTPUT(res['message'])
+			OUTPUT('Games available: ' + res['data']['games'])
+			game=input('Enter the game you want to play:\n')
+			logging.debug(f'gsu: {game}')
+			if game in res['data']['games'].split():
+				# first get required args for game setup
+				res=dialog(method='get',command='get_gm_req',data={'game':game}) # no need to verify if host or not
 				OUTPUT(res['message'])
-				OUTPUT('Existing rooms:')
-				rm_ls=res['data']['rooms'].split('&')
-				OUTPUT('\n'.join(rm_ls) if rm_ls else '/\n'); sleep(0.7) # doesn't use 'None' as is a legal rid
-				OUTPUT('\nEnter the id of an existing room you want to enter...')
-				OUTPUT('...or a new id for a new room you want to create...')
-				OUTPUT('...in both cases the id must be consist of only alphabets and numbers...')
-				OUTPUT('...and also with a minimum length of 4.'); sleep(0.7)
-				rm=input('RoomID ?=\n')
-				if len(rm)<4 or not rm.isalnum():
-					OUTPUT('RoomID illegal !')
-				else:
-					CUR_RM=rm # mark current room
-					if rm not in list(REC[1].keys()): # haven't entered this room during this login
-						REC[1][rm]=0 # initialize room history read position record
-					if rm in rm_ls: # room exists in server
-						logging.debug(f'e: {rm}')
-						res=dialog(method='post',command='enter',data={'username':USR,'roomid':rm})
-					else: # room doesn't exist, thus create it
-						logging.debug(f'c: {rm}')
-						res=dialog(method='post',command='create',data={'username':USR,'roomid':rm})
-					OUTPUT(res['message'])
-			case 'room'|'r':
-				if not CUR_RM: OUTPUT('Not in a room yet!'); continue
-				msg=input('Enter the message you want to say to your room members :=\n')
-				logging.debug(f'r_msg: {msg}')
-				res=dialog(method='post',command='rm_chat',data={'username':USR,'message':msg})
-				OUTPUT(res['message'])
-				REC[1][CUR_RM]+=1
-			case 'leave'|'l':
-				if not CUR_RM: OUTPUT('Not in a room yet!'); continue
-				CUR_RM='' # resets room
-				res=dialog(method='post',command='leave',data={'username':USR})
-				OUTPUT(res['message'])
-			case 'setup'|'game_setup'|'s'|'gsu': # game choosing and setup; for Room Hosts only
-				if not CUR_RM: OUTPUT('Not in a room yet!'); continue
-				if CUR_GM:
-					OUTPUT('Already loaded a game in current room! Please get ready!'); continue
-				res=dialog(method='get',command='get_gms') # should return with ['data']['games']=' '.join(games_list)
-				OUTPUT(res['message'])
-				OUTPUT('Games available: ' + res['data']['games'])
-				game=input('Enter the game you want to play:\n')
-				logging.debug(f'gsu: {game}')
-				if game in res['data']['games'].split():
-					# first get required args for game setup
-					res=dialog(method='get',command='get_gm_req',data={'game':game}) # no need to verify if host or not
-					OUTPUT(res['message'])
-					OUTPUT('Required params for game setup:\n' + (req:=res['data']['required'])) # req uses sep==','
+				OUTPUT('Required params for game setup:\n' + (req:=res['data']['required'])) # req uses sep==','
+				params=input('Please input the proper params for gameplay:\n')
+				while len(params.split(' '))!=len(req.split(',')):
+					OUTPUT('Parameter count error!')
 					params=input('Please input the proper params for gameplay:\n')
-					while len(params.split(' '))!=len(req.split(',')):
-						OUTPUT('Parameter count error!')
-						params=input('Please input the proper params for gameplay:\n')
-					logging.debug(f'params: {params}')
-					res=dialog(method='post',command='gm_setup',data={
-						'username':USR,'game':game,'params':params}) # param checking done by server
-					OUTPUT(msg:=res['message'])
-					if msg.startswith('Successful'): # game-setup request fulfilled
-						CUR_GM=game
+				logging.debug(f'params: {params}')
+				res=dialog(method='post',command='gm_setup',data={
+					'username':USR,'game':game,'params':params}) # param checking done by server
+				OUTPUT(msg:=res['message'])
+				if msg.startswith('Successful'): # game-setup request fulfilled
+					CUR_GM=game
+			else:
+				OUTPUT("Game doesn't exist!")
+		elif cmd in ('ready','game_ready','rd','gr'): # getting ready for gameplay
+			if not CUR_GM:
+				OUTPUT('Game not set up yet!'); continue
+			res=dialog(method='post',command='gm_ready',data={'username':USR})
+			OUTPUT(res['message'])
+		elif cmd in ('start','game_start','st','gst'):
+			if not CUR_GM:
+				OUTPUT('Game not set up yet!'); continue
+			res=dialog(method='post',command='gm_start',data={'username':USR})
+			OUTPUT(res['message'])
+			# TBD: remember to remove (reset) GM_MOD after game ends
+		else:
+			if T:
+				if cmd=='get_pub_msg':
+					pub_rec=REC[0]
+					res=dialog(method='get',command=cmd,data={'last':pub_rec})
+					OUTPUT(res['message'])
+					pub_msg=res['data']['messages']
+					if pub_msg:
+						OUTPUT(pub_msg + '\n')
+						REC[0]+=len(pub_msg.split('\n\n'))
+				elif cmd=='get_rm_msg':
+					rm_rec=REC[1][CUR_RM]
+					res=dialog(method='get',command=cmd,data={'username':USR,'last':rm_rec})
+					OUTPUT(res['message'])
+					rm_msg=res['data']['messages']
+					if rm_msg:
+						OUTPUT('\n' + rm_msg + '\n')
+						REC[1][CUR_RM]+=len(rm_msg.split('\n\n'))
+				elif cmd=='get_gm_rd': # copied from method
+					if CUR_RM:
+						if not GM_MOD:  # in room, game not started
+							res = dialog(method='get', command='get_gm_rd', data={'username': USR})
+							if T: OUTPUT(res['message'])
+							data = res['data']  # might be empty if game not set up
+							if data and not CUR_GM:
+								CUR_GM = data[
+									'name']  # no output here, since sys msg is added when host set up the game
+							if 'ready' in data:
+								OUTPUT('\nCurrent players ready for the game:\n' + (data['ready'] or 'None'))
+							else:  # game started
+								GM_MOD = imm(CUR_GM + '4Client')  # imports the local game module
 				else:
-					OUTPUT("Game doesn't exist!")
-			case 'ready'|'game_ready'|'rd'|'gr': # getting ready for gameplay
-				if not CUR_GM:
-					OUTPUT('Game not set up yet!'); continue
-				res=dialog(method='post',command='gm_ready',data={'username':USR})
-				OUTPUT(res['message'])
-			case 'start'|'game_start'|'st'|'gst':
-				if not CUR_GM:
-					OUTPUT('Game not set up yet!'); continue
-				res=dialog(method='post',command='gm_start',data={'username':USR})
-				OUTPUT(res['message'])
-				# TBD: remember to remove (reset) GM_MOD after game ends
-			case _:
-				if T:
-					match cmd:
-						case 'get_pub_msg':
-							pub_rec=REC[0]
-							res=dialog(method='get',command=cmd,data={'last':pub_rec})
-							OUTPUT(res['message'])
-							pub_msg=res['data']['messages']
-							if pub_msg:
-								OUTPUT(pub_msg + '\n')
-								REC[0]+=len(pub_msg.split('\n\n'))
-						case 'get_rm_msg':
-							rm_rec=REC[1][CUR_RM]
-							res=dialog(method='get',command=cmd,data={'username':USR,'last':rm_rec})
-							OUTPUT(res['message'])
-							rm_msg=res['data']['messages']
-							if rm_msg:
-								OUTPUT('\n' + rm_msg + '\n')
-								REC[1][CUR_RM]+=len(rm_msg.split('\n\n'))
-						case 'get_gm_rd': # copied from method
-							if CUR_RM:
-								if not GM_MOD:  # in room, game not started
-									res = dialog(method='get', command='get_gm_rd', data={'username': USR})
-									if T: OUTPUT(res['message'])
-									data = res['data']  # might be empty if game not set up
-									if data and not CUR_GM:
-										CUR_GM = data[
-											'name']  # no output here, since sys msg is added when host set up the game
-									if 'ready' in data:
-										OUTPUT('\nCurrent players ready for the game:\n' + (data['ready'] or 'None'))
-									else:  # game started
-										GM_MOD = imm(CUR_GM + '4Client')  # imports the local game module
-						case _:
-							OUTPUT('Command incorrect !')
-				elif cmd not in CMD_LS: OUTPUT('Command incorrect!')
+					OUTPUT('Command incorrect !')
+			elif cmd not in CMD_LS: OUTPUT('Command incorrect!')
 
-REC=[0,{}] # chat history record (the position of already-read/last-received messages)
 # in the form of [pub_rec,{rid:rm_rec,rid:rm_rec...}], with types: rid->str, rec->int
-def msg_refr(interval:int|float): # refreshes, if to receive new chat messages
+def msg_refr(interval): # refreshes, if to receive new chat messages
 	global REC
 	while ALIVE:
 		if USR:
@@ -383,9 +388,7 @@ def msg_refr(interval:int|float): # refreshes, if to receive new chat messages
 				REC[0]+=len(pub_msg.split('\n\n'))
 		sleep(interval)
 
-GM_ST={'info_rec':0,'player':''} # in-game status
-GM_MOD=None # should be of type 'module'
-def __get_gm_rd(interval:int|float): # comes into effect on room entrance, and stops on game start
+def __get_gm_rd(interval): # comes into effect on room entrance, and stops on game start
 	global CUR_GM,GM_MOD
 	while ALIVE:
 		if CUR_RM:
@@ -404,7 +407,7 @@ def __get_gm_rd(interval:int|float): # comes into effect on room entrance, and s
 				return True # game started
 		else: sleep(interval)
 
-def __get_gm_st(interval:int|float): # comes into effect on game start, and fades on game finish
+def __get_gm_st(interval): # comes into effect on game start, and fades on game finish
 	global GM_ST
 	while ALIVE:
 		if GM_MOD:
@@ -509,50 +512,54 @@ def log_init():
 
 
 # for encryption; custom object
-CRPT=None
-def exchange_keys():
+class MyCrypto:
 	from Crypto.PublicKey import RSA # module
 	from Crypto.Cipher import PKCS1_OAEP # module
 
-	class MyCrypto:
-		def __init__(self):
-			self.__self_key=RSA.generate(2048)
-			self.__self_decode_cipher=PKCS1_OAEP.new(self.__self_key)
-			logging.info('self key and cipher generated')
-			res=dialog(
-				method='post',command='key_exc',
-				data={'public_key':self.__self_key.public_key().export_key().decode()}
-			)
-			print(res['message'])
-			self.pbkid=res['data']['pbkid']
-			self._received_public_keystring=res['data']['public_key']
-			self._public_key=RSA.import_key(self._received_public_keystring)
-			self._public_encode_cipher=PKCS1_OAEP.new(self._public_key)
-			logging.info('server pubkey and cipher acquired')
+	pbkid=''
+	__self_key: RSA.RsaKey
+	__self_decode_cipher: PKCS1_OAEP.PKCS1OAEP_Cipher
+	__public_key: RSA.RsaKey
+	__public_encode_cipher: PKCS1_OAEP.PKCS1OAEP_Cipher
 
-		def decrypt(self,encrypted:bytes) -> str:
-			groups=[]
-			# from the module we know that each fragment is encrypted into a 256-byte ciphertext
-			while len(encrypted)>256:
-				groups.append(encrypted[:256])
-				encrypted=encrypted[256:]
-			groups.append(encrypted)
+	def __init__(self):
+		self.__self_key=self.RSA.generate(2048)
+		self.__self_decode_cipher=self.PKCS1_OAEP.new(self.__self_key)
+		logging.info('self key and cipher generated')
 
-			return b''.join([self.__self_decode_cipher.decrypt(data) for data in groups]).decode()
+	def exchange_key(self,test=False):
+		res=dialog(
+			method='post',command='key_exc',
+			data={'public_key':self.__self_key.public_key().export_key().decode()},
+			t=T or test
+		)
+		print(res['message'])
+		self.pbkid=res['data']['pbkid']
+		received_public_keystring=res['data']['public_key']
+		self.__public_key=self.RSA.import_key(received_public_keystring)
+		self.__public_encode_cipher=self.PKCS1_OAEP.new(self.__public_key)
+		logging.info('server pubkey acquired and cipher constructed')
 
-		def encrypt(self,data_string:str) -> bytes:
-			encoded=data_string.encode()
-			groups=[]
-			# from the module we know that the max encryption length is 256-2*20-2 bytes
-			while len(encoded)>214:
-				groups.append(encoded[:214])
-				encoded=encoded[214:]
-			groups.append(encoded)
+	def decrypt(self,encrypted:bytes) -> str:
+		groups=[]
+		# from the module we know that each fragment is encrypted into a 256-byte ciphertext
+		while len(encrypted)>256:
+			groups.append(encrypted[:256])
+			encrypted=encrypted[256:]
+		groups.append(encrypted)
 
-			return b''.join([self._public_encode_cipher.encrypt(data) for data in groups])
+		return b''.join([self.__self_decode_cipher.decrypt(data) for data in groups]).decode()
 
-	global CRPT
-	CRPT=MyCrypto()
+	def encrypt(self,data_string:str) -> bytes:
+		encoded=data_string.encode()
+		groups=[]
+		# from the module we know that the max encryption length is 256-2*20-2 bytes
+		while len(encoded)>214:
+			groups.append(encoded[:214])
+			encoded=encoded[214:]
+		groups.append(encoded)
+
+		return b''.join([self.__public_encode_cipher.encrypt(data) for data in groups])
 
 if __name__=='__main__':
 	log_init()
@@ -564,7 +571,8 @@ if __name__=='__main__':
 		assert trial.startswith('Successful')
 		logging.debug('trial passed')
 		OUTPUT("\nWelcome to Varisox137's server! (still improving yet)"); sleep(0.7)
-		exchange_keys()
+		CRPT=MyCrypto()
+		CRPT.exchange_key()
 		print('\nEncrypted communication established.'); sleep(0.7)
 		log_or_reg() # login or registration, USR set
 		sleep(1)
