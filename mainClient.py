@@ -12,7 +12,7 @@ import httpx # modules
 # import bwpgrb.bwpMain
 
 # the following globals should be constant objects throughout the program
-CLIENT_VERSION='231010' # ALWAYS remember to update server acceptable cli-ver !!!
+CLIENT_VERSION='231018' # ALWAYS remember to update server acceptable cli-ver !!!
 URL='https://n6944f2933.imdo.co/'
 CLI=httpx.Client(timeout=5,verify=False,headers={
 	'Connection': 'keep-alive',
@@ -42,7 +42,7 @@ CRPT=None # custom encryption
 
 # core method
 def dialog(method:str,command:str,data:dict=None,
-		   t=T,client=CLI,crpt=CRPT):
+		   t:bool=None,client=CLI,crpt=CRPT):
 	global URL
 	logging.debug(f'method={method}, command={command}, data={data}')
 
@@ -51,6 +51,7 @@ def dialog(method:str,command:str,data:dict=None,
 	data['command']=command
 	packed_data={'pbkid':''}
 
+	if not t: t=T
 	if t:
 		URL='http://127.0.0.1:1037'
 		client.headers.update({'User-Agent':'test-only'})
@@ -451,6 +452,7 @@ def terminate(): # includes exit() method
 	sleep(1)
 	input('\nProgram finished, press enter to quit......\n')
 	EXECUTOR.shutdown(cancel_futures=True)
+	logging.shutdown()
 
 def handle_error(err: Exception):
 	logging.info(f'handling error: {err}')
